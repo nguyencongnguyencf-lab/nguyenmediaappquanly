@@ -1,0 +1,591 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Hóa Đơn Bán Lẻ - NGUYỄN VI SHOP</title>
+  <style>
+    /* =========================================================
+       CSS RESET & BASE STYLES
+       ========================================================= */
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: 'Segoe UI', Roboto, -apple-system, BlinkMacSystemFont, Arial, sans-serif;
+      background-color: #f1f5f9;
+      color: #1f2a3a;
+      line-height: 1.5;
+      padding: 30px 15px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-height: 100vh;
+    }
+
+    /* =========================================================
+       ACTION BUTTONS (SCREEN ONLY)
+       ========================================================= */
+    .action-bar {
+      width: 100%;
+      max-width: 800px;
+      display: flex;
+      justify-content: flex-end;
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 20px;
+      font-size: 14px;
+      font-weight: 600;
+      border-radius: 8px;
+      border: none;
+      cursor: pointer;
+      transition: all 0.2s ease-in-out;
+      text-decoration: none;
+    }
+
+    .btn-primary {
+      background-color: #1f2a3a;
+      color: #ffffff;
+      box-shadow: 0 4px 12px rgba(31, 42, 58, 0.15);
+    }
+
+    .btn-primary:hover {
+      background-color: #c8a86e;
+      color: #1f2a3a;
+      transform: translateY(-1px);
+      box-shadow: 0 6px 16px rgba(200, 168, 110, 0.3);
+    }
+
+    .btn-secondary {
+      background-color: #ffffff;
+      color: #475569;
+      border: 1px solid #cbd5e1;
+    }
+
+    .btn-secondary:hover {
+      background-color: #f8fafc;
+      color: #0f172a;
+    }
+
+    /* =========================================================
+       INVOICE CONTAINER (PREVIEW & PRINT)
+       ========================================================= */
+    .invoice-card {
+      width: 100%;
+      max-width: 800px;
+      background-color: #ffffff;
+      border-radius: 16px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.06), 0 1px 3px rgba(0, 0, 0, 0.04);
+      border: 1px solid #e2e8f0;
+      padding: 40px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    /* Top Decorative Gold Accent Line */
+    .invoice-card::before {
+      content: "";
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 5px;
+      background: linear-gradient(90deg, #1f2a3a 0%, #c8a86e 50%, #1f2a3a 100%);
+    }
+
+    /* =========================================================
+       HEADER SECTION
+       ========================================================= */
+    .invoice-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      border-bottom: 2px solid #f1f5f9;
+      padding-bottom: 24px;
+      margin-bottom: 24px;
+      gap: 20px;
+    }
+
+    .brand-section {
+      display: flex;
+      align-items: flex-start;
+      gap: 16px;
+    }
+
+    .logo-badge {
+      width: 48px;
+      height: 48px;
+      background-color: #1f2a3a;
+      color: #c8a86e;
+      border: 2px solid #c8a86e;
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 20px;
+      font-weight: 800;
+      letter-spacing: -1px;
+      flex-shrink: 0;
+    }
+
+    .store-details h1 {
+      font-size: 22px;
+      font-weight: 800;
+      color: #1f2a3a;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+    }
+
+    .store-details h1 span {
+      color: #c8a86e;
+    }
+
+    .store-details p {
+      font-size: 13px;
+      color: #64748b;
+      margin-top: 3px;
+    }
+
+    .store-details p strong {
+      color: #334155;
+    }
+
+    .invoice-title-block {
+      text-align: right;
+    }
+
+    .invoice-title-block h2 {
+      font-size: 20px;
+      font-weight: 800;
+      color: #1f2a3a;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+
+    .invoice-code-badge {
+      display: inline-block;
+      margin-top: 6px;
+      padding: 4px 10px;
+      background-color: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 6px;
+      font-family: 'Courier New', Courier, monospace;
+      font-size: 13px;
+      font-weight: 700;
+      color: #c8a86e;
+    }
+
+    .invoice-date {
+      font-size: 12px;
+      color: #64748b;
+      margin-top: 6px;
+    }
+
+    /* =========================================================
+       CUSTOMER INFO BOX
+       ========================================================= */
+    .info-box {
+      background-color: #f8fafc;
+      border-left: 4px solid #c8a86e;
+      border-radius: 8px;
+      padding: 16px 20px;
+      margin-bottom: 28px;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px 24px;
+    }
+
+    .info-item {
+      font-size: 13px;
+    }
+
+    .info-item .label {
+      color: #64748b;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .info-item .value {
+      font-weight: 700;
+      color: #1f2a3a;
+      margin-top: 2px;
+      font-size: 14px;
+    }
+
+    /* =========================================================
+       PRODUCT TABLE
+       ========================================================= */
+    .table-container {
+      width: 100%;
+      overflow-x: auto;
+      margin-bottom: 28px;
+      border-radius: 10px;
+      border: 1px solid #e2e8f0;
+    }
+
+    .product-table {
+      width: 100%;
+      border-collapse: collapse;
+      text-align: left;
+      font-size: 13px;
+    }
+
+    .product-table th {
+      background-color: #1f2a3a;
+      color: #ffffff;
+      font-weight: 700;
+      text-transform: uppercase;
+      font-size: 11px;
+      letter-spacing: 0.8px;
+      padding: 12px 14px;
+    }
+
+    .product-table td {
+      padding: 14px;
+      border-bottom: 1px solid #e2e8f0;
+      color: #334155;
+    }
+
+    .product-table tbody tr:nth-child(even) {
+      background-color: #f8fafc;
+    }
+
+    .product-table tbody tr:last-child td {
+      border-bottom: none;
+    }
+
+    .sku-tag {
+      display: inline-block;
+      font-family: 'Courier New', Courier, monospace;
+      font-size: 11px;
+      color: #64748b;
+      background-color: #f1f5f9;
+      padding: 2px 6px;
+      border-radius: 4px;
+      margin-top: 3px;
+    }
+
+    .text-center { text-align: center; }
+    .text-right { text-align: right; }
+    .font-bold { font-weight: 700; }
+    .price-text { color: #1f2a3a; }
+
+    /* =========================================================
+       SUMMARY & TOTAL SECTION
+       ========================================================= */
+    .summary-wrapper {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      gap: 20px;
+      margin-bottom: 36px;
+    }
+
+    .summary-notes {
+      font-size: 12px;
+      color: #64748b;
+      max-w: 320px;
+    }
+
+    .summary-notes p {
+      margin-bottom: 4px;
+    }
+
+    .summary-box {
+      width: 100%;
+      max-width: 320px;
+      background-color: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 12px;
+      padding: 16px 20px;
+    }
+
+    .summary-row {
+      display: flex;
+      justify-content: space-between;
+      font-size: 13px;
+      color: #475569;
+      margin-bottom: 8px;
+    }
+
+    .summary-row.total-row {
+      border-top: 2px solid #e2e8f0;
+      padding-top: 10px;
+      margin-top: 8px;
+      margin-bottom: 0;
+      font-size: 15px;
+      font-weight: 800;
+      color: #1f2a3a;
+    }
+
+    .summary-row.total-row .total-amount {
+      color: #c8a86e;
+      font-size: 18px;
+    }
+
+    /* =========================================================
+       SIGNATURE SECTION
+       ========================================================= */
+    .signature-section {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      text-align: center;
+      margin-top: 30px;
+      margin-bottom: 40px;
+    }
+
+    .signature-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: #1f2a3a;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .signature-sub {
+      font-size: 11px;
+      color: #94a3b8;
+      font-style: italic;
+      margin-top: 2px;
+    }
+
+    .signature-space {
+      height: 70px;
+    }
+
+    /* =========================================================
+       FOOTER
+       ========================================================= */
+    .invoice-footer {
+      text-align: center;
+      border-top: 1px dashed #cbd5e1;
+      padding-top: 16px;
+      font-size: 12px;
+      color: #64748b;
+      font-style: italic;
+    }
+
+    .invoice-footer span {
+      color: #c8a86e;
+      font-weight: 700;
+    }
+
+    /* =========================================================
+       PRINT OPTIMIZATION (@MEDIA PRINT)
+       ========================================================= */
+    @page {
+      size: A4 portrait;
+      margin: 8mm; /* Hide browser default title, URL, date headers/footers */
+    }
+
+    @media print {
+      body {
+        background-color: #ffffff !important;
+        padding: 0 !important;
+        margin: 0 !important;
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+      }
+
+      .action-bar {
+        display: none !important;
+      }
+
+      .invoice-card {
+        box-shadow: none !important;
+        border: none !important;
+        padding: 10px !important;
+        max-width: 100% !important;
+        border-radius: 0 !important;
+      }
+
+      .product-table th {
+        background-color: #1f2a3a !important;
+        color: #ffffff !important;
+      }
+    }
+
+    /* =========================================================
+       RESPONSIVE DESIGN (MOBILE PREVIEW)
+       ========================================================= */
+    @media (max-width: 640px) {
+      .invoice-card {
+        padding: 20px 16px;
+      }
+
+      .invoice-header {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+
+      .invoice-title-block {
+        text-align: left;
+      }
+
+      .summary-wrapper {
+        flex-direction: column;
+        align-items: stretch;
+      }
+
+      .summary-box {
+        max-width: 100%;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Screen Buttons (Hidden when printing) -->
+  <div class="action-bar">
+    <button className="btn btn-secondary" onclick="window.close()">
+      <svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+        <path d="M4.646 4.646a.5.5 0 0 1 .708 0L8 7.293l2.646-2.647a.5.5 0 0 1 .708.708L8.707 8l2.647 2.646a.5.5 0 0 1-.708.708L8 8.707l-2.646 2.647a.5.5 0 0 1-.708-.708L7.293 8 4.646 5.354a.5.5 0 0 1 0-.708z"/>
+      </svg>
+      Đóng
+    </button>
+    <button className="btn btn-primary" onclick="printInvoice()">
+      <svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+        <path d="M2.5 8a.5.5 0 0 1 .5-.5h10a.5.5 0 0 1 0 1H3a.5.5 0 0 1-.5-.5z"/>
+        <path d="M5 1a2 2 0 0 0-2 2v2H2a2 2 0 0 0-2 2v3a2 2 0 0 0 2 2h1v1a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2v-1h1a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-1V3a2 2 0 0 0-2-2H5zM4 3a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2H4V3zm1 5a.5.5 0 0 1 .5-.5h1a.5.5 0 0 1 0 1h-1A.5.5 0 0 1 5 8zm0 2h6v3a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-3z"/>
+      </svg>
+      In hóa đơn
+    </button>
+  </div>
+
+  <!-- Printable Invoice Card -->
+  <div class="invoice-card">
+
+    <!-- Header Section -->
+    <header class="invoice-header">
+      <div class="brand-section">
+        <div class="store-details">
+          <h1>NGUYỄN VI <span>SHOP</span></h1>
+          <p>📍 <strong>Địa chỉ:</strong> 123 Đường Nguyễn Trãi, Quận 1, TP. Hồ Chí Minh</p>
+          <p>📞 <strong>SĐT / Zalo:</strong> 0934 811 307</p>
+        </div>
+      </div>
+
+      <div class="invoice-title-block">
+        <h2>HÓA ĐƠN BÁN LẺ</h2>
+        <div class="invoice-code-badge">Mã: PX-20260804-1130</div>
+        <div class="invoice-date">Thời gian: 20:21:00 - 04/08/2026</div>
+      </div>
+    </header>
+
+    <!-- Customer Information Box -->
+    <section className="info-box">
+      <div className="info-item">
+        <div className="label">Khách hàng</div>
+        <div className="value">chị Vi</div>
+      </div>
+      <div className="info-item">
+        <div className="label">Hình thức thanh toán</div>
+        <div className="value">Tiền mặt / Chuyển khoản</div>
+      </div>
+    </section>
+
+    <!-- Products Table -->
+    <section className="table-container">
+      <table className="product-table">
+        <thead>
+          <tr>
+            <th className="text-center" style="width: 50px;">STT</th>
+            <th>TÊN SẢN PHẨM</th>
+            <th className="text-center" style="width: 70px;">ĐVT</th>
+            <th className="text-center" style="width: 60px;">SL</th>
+            <th className="text-right" style="width: 120px;">ĐƠN GIÁ</th>
+            <th className="text-right" style="width: 140px;">THÀNH TIỀN</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td className="text-center font-bold">1</td>
+            <td>
+              <div className="font-bold">Áo Nam Polo Cotton Premium Đen L</div>
+              <div className="sku-tag">SP-AO-POLO-BK</div>
+            </td>
+            <td className="text-center">Cái</td>
+            <td className="text-center font-bold">6</td>
+            <td className="text-right">290.000 đ</td>
+            <td className="text-right font-bold price-text">1.740.000 đ</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- Summary & Payment Total -->
+    <section className="summary-wrapper">
+      <div className="summary-notes">
+        <p>• Giá sản phẩm đã bao gồm thuế GTGT (nếu có).</p>
+        <p>• Vui lòng kiểm tra hàng hóa & hóa đơn trước khi rời khỏi cửa hàng.</p>
+      </div>
+
+      <div className="summary-box">
+        <div className="summary-row">
+          <span>Cộng tiền hàng:</span>
+          <span className="font-bold">1.740.000 đ</span>
+        </div>
+        <div className="summary-row">
+          <span>Chiết khấu / Giảm giá:</span>
+          <span className="font-bold">0 đ</span>
+        </div>
+        <div className="summary-row total-row">
+          <span>TỔNG THANH TOÁN:</span>
+          <span className="total-amount">1.740.000 đ</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Signatures -->
+    <section className="signature-section">
+      <div>
+        <div className="signature-title">KHÁCH HÀNG</div>
+        <div className="signature-sub">(Ký & nhận đủ hàng)</div>
+        <div className="signature-space"></div>
+      </div>
+      <div>
+        <div className="signature-title">NGƯỜI LẬP HÓA ĐƠN</div>
+        <div className="signature-sub">(Ký, ghi rõ họ tên)</div>
+        <div className="signature-space"></div>
+      </div>
+    </section>
+
+    <!-- Footer Thank You -->
+    <footer className="invoice-footer">
+      ✨ Trân trọng cảm ơn Quý khách đã tin tưởng và mua sắm tại <span>NGUYỄN VI SHOP</span>! ✨
+    </footer>
+
+  </div>
+
+  <!-- JavaScript for Printing & Parameter Trigger -->
+  <script>
+    function printInvoice() {
+      // Temporarily clear document title so browser headers remain blank during print
+      const originalTitle = document.title;
+      document.title = '';
+      window.print();
+      setTimeout(() => {
+        document.title = originalTitle;
+      }, 1000);
+    }
+
+    // Auto print if URL contains ?print=true
+    window.addEventListener('DOMContentLoaded', () => {
+      const urlParams = new URLSearchParams(window.location.search);
+      if (urlParams.get('print') === 'true') {
+        setTimeout(printInvoice, 500);
+      }
+    });
+  </script>
+</body>
+</html>
