@@ -266,6 +266,7 @@ export const StockExportPage: React.FC = () => {
         isDeleted: false,
       };
       await db.financialTransactions.add(finTransaction);
+      await enqueueSyncItem('financialTransactions', 'create', finTransaction.id, finTransaction);
 
       // 3. Subtract Stock in IndexedDB & check low stock threshold
       const lowStockProducts: LowStockItem[] = [];

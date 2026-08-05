@@ -61,7 +61,7 @@ export interface InventoryTransaction {
 
 export interface SyncQueueItem {
   id: string;
-  table: 'products' | 'categories' | 'inventoryTransactions' | 'settings';
+  table: 'products' | 'categories' | 'inventoryTransactions' | 'financialTransactions' | 'debts' | 'settings';
   action: 'create' | 'update' | 'delete';
   recordId: string;
   data: any;
@@ -241,5 +241,6 @@ export interface DebtRecord {
   status: 'unpaid' | 'partial' | 'paid';
   createdAt: string;
   updatedAt: string;
+  syncStatus?: SyncStatus;
   isDeleted?: boolean;
 }

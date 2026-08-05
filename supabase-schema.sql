@@ -49,11 +49,47 @@ CREATE TABLE IF NOT EXISTS "inventoryTransactions" (
     "isDeleted" BOOLEAN DEFAULT false
 );
 
+-- 4. Table: financialTransactions
+CREATE TABLE IF NOT EXISTS "financialTransactions" (
+    id TEXT PRIMARY KEY,
+    code TEXT NOT NULL,
+    type TEXT NOT NULL,
+    category TEXT NOT NULL,
+    "categoryName" TEXT,
+    amount NUMERIC DEFAULT 0,
+    "partyName" TEXT,
+    "paymentMethod" TEXT DEFAULT 'cash',
+    note TEXT,
+    "createdAt" TIMESTAMPTZ DEFAULT NOW(),
+    "updatedAt" TIMESTAMPTZ DEFAULT NOW(),
+    "syncStatus" TEXT DEFAULT 'synced',
+    "isDeleted" BOOLEAN DEFAULT false
+);
+
+-- 5. Table: debts
+CREATE TABLE IF NOT EXISTS debts (
+    id TEXT PRIMARY KEY,
+    "partyName" TEXT NOT NULL,
+    "partyType" TEXT NOT NULL,
+    "totalDebt" NUMERIC DEFAULT 0,
+    "paidAmount" NUMERIC DEFAULT 0,
+    "remainingDebt" NUMERIC DEFAULT 0,
+    note TEXT,
+    status TEXT DEFAULT 'unpaid',
+    "createdAt" TIMESTAMPTZ DEFAULT NOW(),
+    "updatedAt" TIMESTAMPTZ DEFAULT NOW(),
+    "isDeleted" BOOLEAN DEFAULT false
+);
+
 -- Enable Row Level Security (RLS) & Allow public access for anon key
 ALTER TABLE products ENABLE ROW LEVEL SECURITY;
 ALTER TABLE categories ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "inventoryTransactions" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "financialTransactions" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE debts ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "Allow public all access on products" ON products FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Allow public all access on categories" ON categories FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Allow public all access on inventoryTransactions" ON "inventoryTransactions" FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Allow public all access on financialTransactions" ON "financialTransactions" FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Allow public all access on debts" ON debts FOR ALL USING (true) WITH CHECK (true);

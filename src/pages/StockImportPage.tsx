@@ -146,6 +146,7 @@ export const StockImportPage: React.FC = () => {
         isDeleted: false,
       };
       await db.financialTransactions.add(finTransaction);
+      await enqueueSyncItem('financialTransactions', 'create', finTransaction.id, finTransaction);
 
       // 3. Immediately update local inventory stock for each product
       for (const item of items) {

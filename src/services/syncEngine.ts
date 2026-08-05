@@ -4,7 +4,7 @@ import { useNetworkStore } from '../store/useNetworkStore';
 import type { SyncQueueItem, ConflictRecord } from '../types/inventory';
 
 export async function enqueueSyncItem(
-  table: 'products' | 'categories' | 'inventoryTransactions',
+  table: 'products' | 'categories' | 'inventoryTransactions' | 'financialTransactions' | 'debts',
   action: 'create' | 'update' | 'delete',
   recordId: string,
   data: any
@@ -33,6 +33,10 @@ export async function enqueueSyncItem(
       await db.categories.update(recordId, { syncStatus: 'pending', updatedAt: new Date().toISOString() });
     } else if (table === 'inventoryTransactions') {
       await db.inventoryTransactions.update(recordId, { syncStatus: 'pending', updatedAt: new Date().toISOString() });
+    } else if (table === 'financialTransactions') {
+      await db.financialTransactions.update(recordId, { syncStatus: 'pending', updatedAt: new Date().toISOString() });
+    } else if (table === 'debts') {
+      await db.debts.update(recordId, { syncStatus: 'pending', updatedAt: new Date().toISOString() });
     }
   }
 
@@ -54,6 +58,32 @@ function fetchWithTimeout<T>(builder: PromiseLike<T>, timeoutMs = 6000): Promise
   ]);
 }
 
+// Pull latest data from Supabase down into local IndexedDB
+export async function pullFromSupabase(supabase: any): Promise<number> {
+  let totalPulled = 0;
+  const tables: Array<'categories' | 'products' | 'inventoryTransactions' | 'financialTransactions' | 'debts'> = [
+    'categories',
+    'products',
+    'inventoryTransactions',
+    'financialTransactions',
+    'debts',
+  ];
+
+  for (const tableName of tables) {
+    try {
+      const result = await fetchWithTimeout<{ data: any[] | null; error: any }>(supabase.from(tableName).select('*'), 8000);
+      if (result.data && Array.isArray(result.data) && result.data.length > 0) {
+        await (db as any)[tableName].bulkPut(result.data);
+        totalPulled += result.data.length;
+      }
+    } catch (err) {
+      console.warn(`Pull warning for table ${tableName}:`, err);
+    }
+  }
+
+  return totalPulled;
+}
+
 export async function performFullSync(): Promise<{ success: boolean; count: number; message: string }> {
   const networkState = useNetworkStore.getState();
   if (networkState.isSyncing) {
@@ -63,32 +93,26 @@ export async function performFullSync(): Promise<{ success: boolean; count: numb
   networkState.setIsSyncing(true);
 
   try {
-    // Get ALL items in sync queue (including pending, processing, failed)
-    const queue = await db.syncQueue.toArray();
-    queue.sort((a, b) => a.timestamp - b.timestamp);
-
-    if (queue.length === 0) {
-      const syncTime = new Date().toISOString();
-      networkState.setLastSyncTime(syncTime);
-      await networkState.refreshCounts();
-      networkState.setIsSyncing(false);
-      return { success: true, count: 0, message: 'Tất cả dữ liệu đã được đồng bộ mới nhất!' };
-    }
-
     const supabase = getSupabaseClient();
-    let processedCount = 0;
 
+    // 1. If no Supabase configured (Local-First / Demo Mode)
     if (!supabase) {
-      // Local-First / Demo Mode: Instantaneous 0ms queue processing
+      const queue = await db.syncQueue.toArray();
+      let processedCount = 0;
+
       for (const item of queue) {
         if (item.action === 'delete') {
           if (item.table === 'products') await db.products.delete(item.recordId);
           if (item.table === 'categories') await db.categories.delete(item.recordId);
           if (item.table === 'inventoryTransactions') await db.inventoryTransactions.delete(item.recordId);
+          if (item.table === 'financialTransactions') await db.financialTransactions.delete(item.recordId);
+          if (item.table === 'debts') await db.debts.delete(item.recordId);
         } else {
           if (item.table === 'products') await db.products.update(item.recordId, { syncStatus: 'synced' });
           if (item.table === 'categories') await db.categories.update(item.recordId, { syncStatus: 'synced' });
           if (item.table === 'inventoryTransactions') await db.inventoryTransactions.update(item.recordId, { syncStatus: 'synced' });
+          if (item.table === 'financialTransactions') await db.financialTransactions.update(item.recordId, { syncStatus: 'synced' });
+          if (item.table === 'debts') await db.debts.update(item.recordId, { syncStatus: 'synced' });
         }
         processedCount++;
       }
@@ -96,25 +120,22 @@ export async function performFullSync(): Promise<{ success: boolean; count: numb
       await db.syncQueue.clear();
       const syncTime = new Date().toISOString();
       networkState.setLastSyncTime(syncTime);
-
-      await db.syncLogs.add({
-        id: `log-${Date.now()}`,
-        timestamp: syncTime,
-        recordsProcessed: processedCount,
-        status: 'success',
-        details: `Đồng bộ Local thành công ${processedCount} bản ghi`,
-      });
-
       await networkState.refreshCounts();
       networkState.setIsSyncing(false);
+
       return {
         success: true,
         count: processedCount,
-        message: `Đã đồng bộ siêu tốc ${processedCount} bản ghi!`,
+        message: 'Tất cả dữ liệu local đã được cập nhật!',
       };
     }
 
-    // Remote Supabase Sync with 6-second timeout per record
+    // 2. Remote Supabase Sync: PUSH local changes then PULL remote updates
+    const queue = await db.syncQueue.toArray();
+    queue.sort((a, b) => a.timestamp - b.timestamp);
+    let processedCount = 0;
+
+    // Phase 1: PUSH local queue items to Supabase
     for (const item of queue) {
       try {
         await db.syncQueue.update(item.id, { status: 'processing' });
@@ -127,6 +148,8 @@ export async function performFullSync(): Promise<{ success: boolean; count: numb
           if (item.table === 'products') await db.products.update(item.recordId, { syncStatus: 'synced' });
           if (item.table === 'categories') await db.categories.update(item.recordId, { syncStatus: 'synced' });
           if (item.table === 'inventoryTransactions') await db.inventoryTransactions.update(item.recordId, { syncStatus: 'synced' });
+          if (item.table === 'financialTransactions') await db.financialTransactions.update(item.recordId, { syncStatus: 'synced' });
+          if (item.table === 'debts') await db.debts.update(item.recordId, { syncStatus: 'synced' });
 
           await db.syncQueue.delete(item.id);
           processedCount++;
@@ -137,6 +160,8 @@ export async function performFullSync(): Promise<{ success: boolean; count: numb
           if (item.table === 'products') await db.products.delete(item.recordId);
           if (item.table === 'categories') await db.categories.delete(item.recordId);
           if (item.table === 'inventoryTransactions') await db.inventoryTransactions.delete(item.recordId);
+          if (item.table === 'financialTransactions') await db.financialTransactions.delete(item.recordId);
+          if (item.table === 'debts') await db.debts.delete(item.recordId);
 
           await db.syncQueue.delete(item.id);
           processedCount++;
@@ -146,11 +171,7 @@ export async function performFullSync(): Promise<{ success: boolean; count: numb
         const retryCount = (item.retryCount || 0) + 1;
 
         if (retryCount >= 2) {
-          // Remove stuck item after 2 attempts to keep queue clean & fast
           await db.syncQueue.delete(item.id);
-          if (item.table === 'products') await db.products.update(item.recordId, { syncStatus: 'synced' });
-          if (item.table === 'categories') await db.categories.update(item.recordId, { syncStatus: 'synced' });
-          if (item.table === 'inventoryTransactions') await db.inventoryTransactions.update(item.recordId, { syncStatus: 'synced' });
         } else {
           await db.syncQueue.update(item.id, {
             status: 'pending',
@@ -161,20 +182,27 @@ export async function performFullSync(): Promise<{ success: boolean; count: numb
       }
     }
 
+    // Phase 2: PULL remote data from Supabase down into local IndexedDB
+    const pulledCount = await pullFromSupabase(supabase);
+
     const syncTime = new Date().toISOString();
     networkState.setLastSyncTime(syncTime);
 
     await db.syncLogs.add({
       id: `log-${Date.now()}`,
       timestamp: syncTime,
-      recordsProcessed: processedCount,
+      recordsProcessed: processedCount + pulledCount,
       status: 'success',
-      details: `Đồng bộ máy chủ Supabase thành công ${processedCount} bản ghi`,
+      details: `Đồng bộ 2 chiều thành công (Đẩy: ${processedCount}, Kéo về: ${pulledCount})`,
     });
 
     await networkState.refreshCounts();
     networkState.setIsSyncing(false);
-    return { success: true, count: processedCount, message: `Đã đồng bộ ${processedCount} bản ghi lên máy chủ!` };
+    return {
+      success: true,
+      count: processedCount + pulledCount,
+      message: `Đã đồng bộ 2 chiều thành công! (Đẩy: ${processedCount}, Tải về: ${pulledCount})`,
+    };
   } catch (err: any) {
     console.error('Full sync error:', err);
     networkState.setIsSyncing(false);

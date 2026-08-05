@@ -11,6 +11,7 @@ import type {
 import { useUIStore } from '../store/useUIStore';
 import { useSettingsStore } from '../store/useSettingsStore';
 import { notifyFinancialTransaction } from '../services/telegramService';
+import { enqueueSyncItem } from '../services/syncEngine';
 import { exportElementToPDF } from '../services/pdfService';
 import { numberToVietnameseWords } from '../services/numberToWords';
 import {
@@ -148,6 +149,7 @@ export const FinancialManagementPage: React.FC = () => {
 
     try {
       await db.financialTransactions.add(newTransaction);
+      await enqueueSyncItem('financialTransactions', 'create', newTransaction.id, newTransaction);
       notifyFinancialTransaction(newTransaction).catch((err) =>
         console.error('Telegram financial notification error:', err)
       );
@@ -187,6 +189,7 @@ export const FinancialManagementPage: React.FC = () => {
 
     try {
       await db.debts.add(newDebt);
+      await enqueueSyncItem('debts', 'create', newDebt.id, newDebt);
       showToast(`Đã ghi nhận công nợ mới cho "${newDebt.partyName}"`, 'success');
       setDebtPartyName('');
       setDebtAmount(0);
@@ -208,6 +211,14 @@ export const FinancialManagementPage: React.FC = () => {
       const newRemaining = Math.max(0, selectedDebt.totalDebt - newPaid);
       const newStatus = newRemaining === 0 ? 'paid' : 'partial';
 
+      const updatedDebt = {
+        ...selectedDebt,
+        paidAmount: newPaid,
+        remainingDebt: newRemaining,
+        status: newStatus,
+        updatedAt: now,
+      };
+
       // 1. Update debt record
       await db.debts.update(selectedDebt.id, {
         paidAmount: newPaid,
@@ -215,6 +226,7 @@ export const FinancialManagementPage: React.FC = () => {
         status: newStatus,
         updatedAt: now,
       });
+      await enqueueSyncItem('debts', 'update', selectedDebt.id, updatedDebt);
 
       // 2. Automatically record in Cashbook Sổ Quỹ
       const codePrefix = selectedDebt.partyType === 'customer' ? 'PT' : 'PC';
@@ -236,6 +248,7 @@ export const FinancialManagementPage: React.FC = () => {
       };
 
       await db.financialTransactions.add(finRecord);
+      await enqueueSyncItem('financialTransactions', 'create', finRecord.id, finRecord);
       notifyFinancialTransaction(finRecord).catch((err) =>
         console.error('Telegram debt payment notification error:', err)
       );
