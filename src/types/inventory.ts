@@ -231,15 +231,29 @@ export interface FinancialTransaction {
   isDeleted?: boolean;
 }
 
+export interface DebtPaymentHistory {
+  id: string;
+  amount: number;
+  paymentMethod: PaymentMethod;
+  note?: string;
+  createdAt: string;
+  receiptCode?: string;
+}
+
 export interface DebtRecord {
   id: string;
   partyName: string; // Tên Khách Hàng hoặc Nhà Cung Cấp
   partyType: 'customer' | 'supplier'; // customer: Phải thu (Khách nợ), supplier: Phải trả (Nợ NCC)
+  phone?: string;
+  address?: string;
   totalDebt: number;
   paidAmount: number;
   remainingDebt: number;
+  dueDate?: string;
+  transactionCode?: string; // Mã hóa đơn bán hàng hoặc phiếu nhập liên quan
   note?: string;
   status: 'unpaid' | 'partial' | 'paid';
+  history?: DebtPaymentHistory[];
   createdAt: string;
   updatedAt: string;
   syncStatus?: SyncStatus;

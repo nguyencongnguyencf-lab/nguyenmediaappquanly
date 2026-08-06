@@ -24,6 +24,30 @@ export function exportProductsToExcel(products: Product[]) {
   XLSX.writeFile(workbook, `danh_sach_san_pham_${dateStr}.xlsx`);
 }
 
+export function exportDebtsToExcel(debts: any[]) {
+  const exportData = debts.map((d) => ({
+    'Tên Đối Tác': d.partyName,
+    'Loại Nợ': d.partyType === 'customer' ? 'Phải thu (Khách nợ)' : 'Phải trả (Nợ NCC)',
+    'Số Điện Thoại': d.phone || '',
+    'Địa Chỉ': d.address || '',
+    'Tổng Nợ Gốc (VNĐ)': d.totalDebt,
+    'Đã Trả (VNĐ)': d.paidAmount,
+    'Còn Nợ (VNĐ)': d.remainingDebt,
+    'Hạn Trả': d.dueDate || '',
+    'Mã Đơn Liên Quan': d.transactionCode || '',
+    'Trạng Thái': d.status === 'paid' ? 'Đã hoàn tất' : d.status === 'partial' ? 'Trả 1 phần' : 'Chưa trả',
+    'Ghi Chú': d.note || '',
+    'Ngày Tạo': new Date(d.createdAt).toLocaleDateString('vi-VN'),
+  }));
+
+  const worksheet = XLSX.utils.json_to_sheet(exportData);
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, 'SoNoCongNo');
+
+  const dateStr = new Date().toISOString().split('T')[0];
+  XLSX.writeFile(workbook, `so_no_cong_no_${dateStr}.xlsx`);
+}
+
 export function parseExcelFile(file: File): Promise<Partial<Product>[]> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
