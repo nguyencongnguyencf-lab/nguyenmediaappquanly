@@ -6,7 +6,17 @@ let cachedUrl = '';
 let cachedKey = '';
 
 export function getSupabaseClient(): SupabaseClient | null {
-  const { supabaseUrl, supabaseAnonKey } = useSettingsStore.getState();
+  const settings = useSettingsStore.getState();
+
+  const supabaseUrl =
+    (settings.supabaseUrl && settings.supabaseUrl.trim() !== '')
+      ? settings.supabaseUrl.trim()
+      : (import.meta.env.VITE_SUPABASE_URL || 'https://wcmzdmmbthyzhtbgxlxo.supabase.co');
+
+  const supabaseAnonKey =
+    (settings.supabaseAnonKey && settings.supabaseAnonKey.trim() !== '')
+      ? settings.supabaseAnonKey.trim()
+      : (import.meta.env.VITE_SUPABASE_ANON_KEY || 'sb_publishable_C3drsw7pOu7rtRgtbp_c5w_cHhhvS0d');
 
   if (!supabaseUrl || !supabaseAnonKey) {
     return null;

@@ -71,15 +71,29 @@ CREATE TABLE IF NOT EXISTS debts (
     id TEXT PRIMARY KEY,
     "partyName" TEXT NOT NULL,
     "partyType" TEXT NOT NULL,
+    phone TEXT,
+    address TEXT,
     "totalDebt" NUMERIC DEFAULT 0,
     "paidAmount" NUMERIC DEFAULT 0,
     "remainingDebt" NUMERIC DEFAULT 0,
+    "dueDate" TEXT,
+    "transactionCode" TEXT,
     note TEXT,
     status TEXT DEFAULT 'unpaid',
+    history JSONB DEFAULT '[]'::jsonb,
     "createdAt" TIMESTAMPTZ DEFAULT NOW(),
     "updatedAt" TIMESTAMPTZ DEFAULT NOW(),
+    "syncStatus" TEXT DEFAULT 'synced',
     "isDeleted" BOOLEAN DEFAULT false
 );
+
+-- Migration safety for existing debts table in Supabase
+ALTER TABLE debts ADD COLUMN IF NOT EXISTS phone TEXT;
+ALTER TABLE debts ADD COLUMN IF NOT EXISTS address TEXT;
+ALTER TABLE debts ADD COLUMN IF NOT EXISTS "dueDate" TEXT;
+ALTER TABLE debts ADD COLUMN IF NOT EXISTS "transactionCode" TEXT;
+ALTER TABLE debts ADD COLUMN IF NOT EXISTS history JSONB DEFAULT '[]'::jsonb;
+ALTER TABLE debts ADD COLUMN IF NOT EXISTS "syncStatus" TEXT DEFAULT 'synced';
 
 -- 6. Table: system_settings
 CREATE TABLE IF NOT EXISTS system_settings (

@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { RefreshCw, X } from 'lucide-react';
+import { updateSW } from '../../main';
 
 export const PWAUpdatePrompt: React.FC = () => {
   const [showPrompt, setShowPrompt] = useState(false);
@@ -13,7 +14,14 @@ export const PWAUpdatePrompt: React.FC = () => {
 
   if (!showPrompt) return null;
 
-  const handleRefresh = () => {
+  const handleRefresh = async () => {
+    try {
+      if (typeof updateSW === 'function') {
+        await updateSW(true);
+      }
+    } catch (e) {
+      console.warn('Update SW error:', e);
+    }
     window.location.reload();
   };
 

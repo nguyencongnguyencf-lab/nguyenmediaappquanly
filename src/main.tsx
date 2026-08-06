@@ -5,7 +5,7 @@ import App from './App.tsx';
 import { registerSW } from 'virtual:pwa-register';
 
 // Register Service Worker for PWA Offline capability
-const updateSW = registerSW({
+export const updateSW = registerSW({
   onNeedRefresh() {
     window.dispatchEvent(new CustomEvent('swUpdated'));
   },
