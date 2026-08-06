@@ -10,6 +10,24 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <title>KhoOffline - Quản lý Hàng hóa Offline-First</title>
+    <script>
+      (function() {
+        var APP_BUILD_VER = '20260806_v2_debt_fix';
+        if (localStorage.getItem('kho_build_ver') !== APP_BUILD_VER) {
+          if ('caches' in window) {
+            caches.keys().then(function(keys) {
+              keys.forEach(function(k) { caches.delete(k); });
+            });
+          }
+          if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.getRegistrations().then(function(regs) {
+              regs.forEach(function(r) { r.unregister(); });
+            });
+          }
+          localStorage.setItem('kho_build_ver', APP_BUILD_VER);
+        }
+      })();
+    </script>
   </head>
   <body class="bg-gray-50 dark:bg-gray-950 antialiased selection:bg-emerald-500 selection:text-white">
     <div id="root"></div>
