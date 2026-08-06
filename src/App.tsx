@@ -59,6 +59,11 @@ export function App() {
 
     refreshCounts();
 
+    // Perform immediate full sync on startup if online
+    if (navigator.onLine) {
+      performFullSync().catch((err) => console.warn('Startup sync error:', err));
+    }
+
     // Auto-sync interval
     let intervalId: any = null;
     if (autoSyncInterval > 0) {

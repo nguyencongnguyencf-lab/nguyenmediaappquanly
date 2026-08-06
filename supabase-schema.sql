@@ -110,12 +110,20 @@ ALTER TABLE "financialTransactions" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE debts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE system_settings ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "Allow public all access on products" ON products FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow public all access on categories" ON categories FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow public all access on inventoryTransactions" ON "inventoryTransactions" FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow public all access on financialTransactions" ON "financialTransactions" FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow public all access on debts" ON debts FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow public all access on system_settings" ON system_settings FOR ALL USING (true) WITH CHECK (true);
+-- Enable Realtime replication for multi-device live sync
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_publication WHERE pubname = 'supabase_realtime') THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE products;
+    ALTER PUBLICATION supabase_realtime ADD TABLE categories;
+    ALTER PUBLICATION supabase_realtime ADD TABLE "inventoryTransactions";
+    ALTER PUBLICATION supabase_realtime ADD TABLE "financialTransactions";
+    ALTER PUBLICATION supabase_realtime ADD TABLE debts;
+  END IF;
+EXCEPTION WHEN OTHERS THEN
+  -- Ignore if tables are already in publication
+  NULL;
+END $$;
 
 -- 7. RPC Function: truncate_all_business_data
 -- Truncates all business data tables dynamically, handles case-sensitivity, resets IDENTITY to 1, and updates system_settings in a single atomic transaction.

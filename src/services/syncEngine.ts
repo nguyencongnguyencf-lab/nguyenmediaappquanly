@@ -72,7 +72,7 @@ export function setupRealtimeSyncListener(): () => void {
   if (!supabase) return () => {};
 
   try {
-    const channel = supabase.channel('system_global_events');
+    const channel = supabase.channel('system_global_realtime_sync');
 
     channel
       .on('broadcast', { event: 'SYSTEM_WIPE' }, async (payload) => {
@@ -84,7 +84,24 @@ export function setupRealtimeSyncListener(): () => void {
         await useNetworkStore.getState().refreshCounts();
         useUIStore.getState().showToast('⚡ [Realtime] Tất cả dữ liệu hệ thống đã được xóa về 0 từ máy chủ!', 'warning');
       })
-      .subscribe();
+      .on('postgres_changes', { event: '*', schema: 'public' }, async (payload: any) => {
+        const { table, eventType, new: newRow, old: oldRow } = payload;
+        console.log(`⚡ [Realtime Multi-Device Sync] Event ${eventType} on table ${table}:`, payload);
+        const validTables = ['products', 'categories', 'inventoryTransactions', 'financialTransactions', 'debts'];
+        if (table && validTables.includes(table) && (db as any)[table]) {
+          if (eventType === 'DELETE') {
+            if (oldRow && oldRow.id) {
+              await (db as any)[table].delete(oldRow.id);
+            }
+          } else if (newRow && newRow.id) {
+            await (db as any)[table].put({ ...newRow, syncStatus: 'synced' });
+          }
+          await useNetworkStore.getState().refreshCounts();
+        }
+      })
+      .subscribe((status) => {
+        console.log('⚡ Status kết nối Realtime Supabase:', status);
+      });
 
     return () => {
       try {
@@ -264,10 +281,30 @@ export async function pullFromSupabase(supabase: any): Promise<number> {
 
   for (const tableName of tables) {
     try {
-      const result = await fetchWithTimeout<{ data: any[] | null; error: any }>(supabase.from(tableName).select('*'), 8000);
-      if (result.data && Array.isArray(result.data) && result.data.length > 0) {
-        await (db as any)[tableName].bulkPut(result.data);
-        totalPulled += result.data.length;
+      const result = await fetchWithTimeout<{ data: any[] | null; error: any }>(
+        supabase.from(tableName).select('*'),
+        8000
+      );
+      if (result.data && Array.isArray(result.data)) {
+        const remoteData = result.data;
+        const remoteIdMap = new Set(remoteData.map((item) => item.id));
+
+        // 1. Put all remote records into local IndexedDB
+        if (remoteData.length > 0) {
+          await (db as any)[tableName].bulkPut(remoteData.map((r) => ({ ...r, syncStatus: 'synced' })));
+          totalPulled += remoteData.length;
+        }
+
+        // 2. Clean up local records that were hard-deleted on Supabase (if synced and not pending in local queue)
+        const localRecords = await (db as any)[tableName].toArray();
+        const pendingQueue = await db.syncQueue.where('table').equals(tableName).toArray();
+        const pendingIds = new Set(pendingQueue.map((q) => q.recordId));
+
+        for (const localRec of localRecords) {
+          if (localRec.id && !remoteIdMap.has(localRec.id) && !pendingIds.has(localRec.id)) {
+            await (db as any)[tableName].delete(localRec.id);
+          }
+        }
       }
     } catch (err) {
       console.warn(`Pull warning for table ${tableName}:`, err);
