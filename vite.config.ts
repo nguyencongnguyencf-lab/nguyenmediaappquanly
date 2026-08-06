@@ -4,7 +4,7 @@ import { VitePWA } from 'vite-plugin-pwa';
 import { fileURLToPath, URL } from 'node:url';
 
 export default defineConfig({
-  base: './',
+  base: process.env.VERCEL ? '/' : './',
   plugins: [
     react(),
     VitePWA({
