@@ -81,15 +81,91 @@ CREATE TABLE IF NOT EXISTS debts (
     "isDeleted" BOOLEAN DEFAULT false
 );
 
+-- 6. Table: system_settings
+CREATE TABLE IF NOT EXISTS system_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    "updatedAt" TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- Enable Row Level Security (RLS) & Allow public access for anon key
 ALTER TABLE products ENABLE ROW LEVEL SECURITY;
 ALTER TABLE categories ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "inventoryTransactions" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "financialTransactions" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE debts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE system_settings ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "Allow public all access on products" ON products FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Allow public all access on categories" ON categories FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Allow public all access on inventoryTransactions" ON "inventoryTransactions" FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Allow public all access on financialTransactions" ON "financialTransactions" FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Allow public all access on debts" ON debts FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Allow public all access on system_settings" ON system_settings FOR ALL USING (true) WITH CHECK (true);
+
+-- 7. RPC Function: truncate_all_business_data
+-- Truncates all business data tables dynamically, handles case-sensitivity, resets IDENTITY to 1, and updates system_settings in a single atomic transaction.
+CREATE OR REPLACE FUNCTION truncate_all_business_data()
+RETURNS json
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+    tbl_name text;
+    target_tables text[] := ARRAY[
+        'products', 
+        'categories', 
+        'inventoryTransactions', 
+        'inventorytransactions',
+        'financialTransactions', 
+        'financialtransactions',
+        'debts'
+    ];
+    truncated_count int := 0;
+    result json;
+BEGIN
+    -- Loop through business tables that actually exist in public schema and truncate them
+    FOR tbl_name IN 
+        SELECT table_name 
+        FROM information_schema.tables 
+        WHERE table_schema = 'public' 
+          AND table_type = 'BASE TABLE'
+          AND table_name = ANY(target_tables)
+    LOOP
+        EXECUTE 'TRUNCATE TABLE public.' || quote_ident(tbl_name) || ' RESTART IDENTITY CASCADE';
+        truncated_count := truncated_count + 1;
+    END LOOP;
+
+    -- Ensure system_settings table exists
+    CREATE TABLE IF NOT EXISTS public.system_settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        "updatedAt" TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    -- Update or insert last_reset_at timestamp in system_settings
+    INSERT INTO public.system_settings (key, value, "updatedAt")
+    VALUES ('last_reset_at', NOW()::text, NOW())
+    ON CONFLICT (key) 
+    DO UPDATE SET value = EXCLUDED.value, "updatedAt" = EXCLUDED."updatedAt";
+
+    result := json_build_object(
+        'success', true,
+        'message', 'Đã xóa toàn bộ dữ liệu nghiệp vụ trên Supabase (' || truncated_count || ' bảng) và reset IDENTITY về 1 thành công!'
+    );
+    RETURN result;
+
+EXCEPTION WHEN OTHERS THEN
+    -- Automatically rolls back transaction on error
+    result := json_build_object(
+        'success', false,
+        'message', SQLERRM
+    );
+    RETURN result;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION truncate_all_business_data() TO anon, authenticated, service_role;
+
+
+

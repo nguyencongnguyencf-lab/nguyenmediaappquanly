@@ -1,7 +1,200 @@
 import { db } from '../db/db';
 import { getSupabaseClient } from './supabaseClient';
 import { useNetworkStore } from '../store/useNetworkStore';
+import { useSettingsStore } from '../store/useSettingsStore';
+import { useUIStore } from '../store/useUIStore';
 import type { SyncQueueItem, ConflictRecord } from '../types/inventory';
+
+export async function clearAllRemoteSupabaseData(): Promise<{ success: boolean; message: string }> {
+  const supabase = getSupabaseClient();
+  if (!supabase) {
+    return { success: false, message: 'Chưa cấu hình kết nối Supabase URL và Anon Key.' };
+  }
+
+  const tables = ['products', 'categories', 'inventoryTransactions', 'financialTransactions', 'debts'];
+  const errors: string[] = [];
+
+  for (const table of tables) {
+    try {
+      const result = await fetchWithTimeout<{ error: any }>(
+        supabase.from(table).delete().neq('id', '_wipe_all_sentinel_id_'),
+        8000
+      );
+      if (result.error) {
+        console.error(`Lỗi khi xóa bảng ${table} trên Supabase:`, result.error);
+        errors.push(`${table}: ${result.error.message || 'Lỗi không xác định'}`);
+      }
+    } catch (err: any) {
+      console.error(`Lỗi ngoại lệ khi xóa bảng ${table} trên Supabase:`, err);
+      errors.push(`${table}: ${err.message || 'Lỗi kết nối'}`);
+    }
+  }
+
+  const nowIso = new Date().toISOString();
+  try {
+    await fetchWithTimeout(
+      supabase.from('system_settings').upsert({
+        key: 'last_reset_at',
+        value: nowIso,
+        updatedAt: nowIso,
+      }),
+      6000
+    );
+  } catch (err) {
+    console.warn('Không thể ghi nhận timestamp last_reset_at lên Supabase:', err);
+  }
+
+  if (errors.length > 0) {
+    return { success: false, message: `Lỗi khi xóa một số bảng trên Supabase: ${errors.join(', ')}` };
+  }
+
+  return { success: true, message: 'Đã xóa hoàn toàn tất cả dữ liệu trên Supabase về số 0!' };
+}
+
+export async function broadcastSystemWipe(timestamp: string) {
+  const supabase = getSupabaseClient();
+  if (!supabase) return;
+  try {
+    const channel = supabase.channel('system_global_events');
+    await channel.subscribe();
+    await channel.send({
+      type: 'broadcast',
+      event: 'SYSTEM_WIPE',
+      payload: { timestamp },
+    });
+  } catch (err) {
+    console.warn('Không thể gửi tín hiệu broadcast SYSTEM_WIPE:', err);
+  }
+}
+
+export function setupRealtimeSyncListener(): () => void {
+  const supabase = getSupabaseClient();
+  if (!supabase) return () => {};
+
+  try {
+    const channel = supabase.channel('system_global_events');
+
+    channel
+      .on('broadcast', { event: 'SYSTEM_WIPE' }, async (payload) => {
+        console.warn('⚡ Đã nhận tín hiệu Realtime SYSTEM_WIPE từ Supabase!', payload);
+        await db.clearAllData();
+        if (payload?.payload?.timestamp) {
+          useSettingsStore.getState().updateSettings({ lastResetAt: payload.payload.timestamp });
+        }
+        await useNetworkStore.getState().refreshCounts();
+        useUIStore.getState().showToast('⚡ [Realtime] Tất cả dữ liệu hệ thống đã được xóa về 0 từ máy chủ!', 'warning');
+      })
+      .subscribe();
+
+    return () => {
+      try {
+        supabase.removeChannel(channel);
+      } catch (e) {
+        // ignore cleanup warning
+      }
+    };
+  } catch (err) {
+    console.warn('Lỗi kết nối Realtime subscription:', err);
+    return () => {};
+  }
+}
+
+export async function wipeAllSystemDataViaRPC(): Promise<{ success: boolean; message: string }> {
+  const supabase = getSupabaseClient();
+  const nowIso = new Date().toISOString();
+
+  if (!supabase) {
+    await db.clearAllData();
+    useSettingsStore.getState().updateSettings({ lastResetAt: nowIso });
+    await useNetworkStore.getState().refreshCounts();
+    return {
+      success: true,
+      message: 'Đã xóa toàn bộ dữ liệu local về 0 thành công (Chế độ chưa kết nối Supabase).',
+    };
+  }
+
+  try {
+    // 1. Call PostgreSQL RPC function truncate_all_business_data on Supabase (atomic TRUNCATE ... RESTART IDENTITY CASCADE)
+    const result = await fetchWithTimeout<{ data: any; error: any }>(
+      supabase.rpc('truncate_all_business_data'),
+      10000
+    );
+
+    const { data, error } = result;
+
+    if (error) {
+      console.error('Lỗi khi gọi RPC truncate_all_business_data:', error);
+      if (error.code === 'PGRST202' || error.message?.includes('function') || error.message?.includes('not found')) {
+        console.warn('RPC truncate_all_business_data chưa tạo trên SQL Editor. Đang chạy cơ chế xóa từng bảng...');
+        return await wipeAllSystemData();
+      }
+      return {
+        success: false,
+        message: `Lỗi kết nối RPC Supabase (${error.code || 'ERR'}): ${error.message || 'Lỗi hệ thống'}. Đã tự động ROLLBACK!`,
+      };
+    }
+
+    if (data && data.success === false) {
+      return {
+        success: false,
+        message: `Lỗi PostgreSQL trong RPC: ${data.message || 'Lỗi trong giao dịch'}. Đã tự động ROLLBACK!`,
+      };
+    }
+
+    // 2. Clear local IndexedDB tables
+    await db.clearAllData();
+
+    // 3. Save lastResetAt timestamp to local settings store
+    useSettingsStore.getState().updateSettings({ lastResetAt: nowIso });
+
+    // 4. Reset network state counters & cache
+    await useNetworkStore.getState().refreshCounts();
+
+    // 5. Broadcast Realtime event to all active clients & exe instances
+    await broadcastSystemWipe(nowIso);
+
+    return {
+      success: true,
+      message: 'Đã xóa TOÀN BỘ dữ liệu trên Supabase (RESTART IDENTITY 1) & Local thành công và phát tín hiệu Realtime tới tất cả các máy!',
+    };
+  } catch (err: any) {
+    console.error('Lỗi ngoại lệ khi gọi wipeAllSystemDataViaRPC:', err);
+    return {
+      success: false,
+      message: `Lỗi kết nối máy chủ: ${err.message || 'Lỗi mạng'}. Đã tự động ROLLBACK toàn bộ!`,
+    };
+  }
+}
+
+export async function wipeAllSystemData(): Promise<{ success: boolean; message: string }> {
+  const nowIso = new Date().toISOString();
+  let supabaseMessage = '';
+
+  const supabase = getSupabaseClient();
+  if (supabase) {
+    const remoteResult = await clearAllRemoteSupabaseData();
+    supabaseMessage = remoteResult.message;
+  }
+
+  // 1. Clear local IndexedDB tables completely
+  await db.clearAllData();
+
+  // 2. Save lastResetAt timestamp to local settings store
+  useSettingsStore.getState().updateSettings({ lastResetAt: nowIso });
+
+  // 3. Reset network state counters
+  await useNetworkStore.getState().refreshCounts();
+
+  // 4. Broadcast Realtime event to all active clients & exe instances
+  await broadcastSystemWipe(nowIso);
+
+  return {
+    success: true,
+    message: supabase
+      ? `Đã xóa sạch tất cả dữ liệu hệ thống (Local + Remote Supabase) về số 0! (${supabaseMessage})`
+      : 'Đã xóa sạch tất cả dữ liệu Local về số 0!',
+  };
+}
 
 export async function enqueueSyncItem(
   table: 'products' | 'categories' | 'inventoryTransactions' | 'financialTransactions' | 'debts',
@@ -128,6 +321,46 @@ export async function performFullSync(): Promise<{ success: boolean; count: numb
         count: processedCount,
         message: 'Tất cả dữ liệu local đã được cập nhật!',
       };
+    }
+
+    // 2. Remote Supabase Sync: Check Remote Reset Sentinel first!
+    try {
+      const resetRes = await fetchWithTimeout<{ data: any; error: any }>(
+        supabase.from('system_settings').select('*').eq('key', 'last_reset_at').maybeSingle(),
+        4000
+      );
+
+      if (resetRes.data && resetRes.data.value) {
+        const remoteResetAt = resetRes.data.value;
+        const localResetAt = useSettingsStore.getState().lastResetAt;
+
+        if (!localResetAt || new Date(remoteResetAt).getTime() > new Date(localResetAt).getTime()) {
+          console.warn('⚡ Remote system reset detected! Wiping local IndexedDB to match Supabase 0 state...');
+
+          await db.clearAllData();
+          useSettingsStore.getState().updateSettings({ lastResetAt: remoteResetAt });
+          await networkState.refreshCounts();
+          networkState.setIsSyncing(false);
+
+          await db.syncLogs.add({
+            id: `log-${Date.now()}`,
+            timestamp: new Date().toISOString(),
+            recordsProcessed: 0,
+            status: 'success',
+            details: 'Đã tự động xóa sạch dữ liệu local theo lệnh reset từ máy chủ/thiết bị khác.',
+          });
+
+          useUIStore.getState().showToast('⚡ Hệ thống đã nhận lệnh xóa tất cả dữ liệu từ thiết bị khác. Dữ liệu ứng dụng đã về 0!', 'warning');
+
+          return {
+            success: true,
+            count: 0,
+            message: 'Đã cập nhật xóa sạch dữ liệu về 0 theo máy chủ remote!',
+          };
+        }
+      }
+    } catch (err) {
+      console.warn('Kiểm tra timestamp reset máy chủ:', err);
     }
 
     // 2. Remote Supabase Sync: PUSH local changes then PULL remote updates

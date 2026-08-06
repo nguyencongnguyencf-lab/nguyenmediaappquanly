@@ -83,13 +83,7 @@ export class InventoryDB extends Dexie {
   }
 }
 
+// Database instance
 export const db = new InventoryDB();
 
-// Ensure initial default categories if database is newly initialized
-db.on('ready', async () => {
-  const count = await db.categories.count();
-  if (count === 0 && initialCategories.length > 0) {
-    await db.categories.bulkPut(initialCategories);
-  }
-});
 

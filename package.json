@@ -18,6 +18,7 @@
     "appId": "com.nguyenvi.khooffline",
     "productName": "KhoOffline Nguyễn Vi Shop",
     "electronDist": "node_modules/electron/dist",
+    "forceCodeSigning": false,
     "directories": {
       "output": "dist_desktop_final"
     },
@@ -26,7 +27,8 @@
       "electron/**/*"
     ],
     "win": {
-      "target": "portable"
+      "target": "portable",
+      "forceCodeSigning": false
     }
   },
   "dependencies": {

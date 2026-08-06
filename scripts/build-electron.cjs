@@ -2,6 +2,8 @@ const { execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
+process.env.CSC_IDENTITY_AUTO_DISCOVERY = 'false';
+
 async function main() {
   console.log('--- 1. Building Vite Production Assets ---');
   execSync('npx vite build', { stdio: 'inherit' });
@@ -21,7 +23,10 @@ async function main() {
         console.warn('Cleanup warning:', e.message);
       }
 
-      execSync('npx electron-builder --win portable', { stdio: 'inherit' });
+      execSync('npx electron-builder --win portable', {
+        stdio: 'inherit',
+        env: { ...process.env, CSC_IDENTITY_AUTO_DISCOVERY: 'false' },
+      });
       success = true;
       console.log('🎉 Electron build completed successfully!');
       break;

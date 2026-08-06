@@ -108,6 +108,7 @@ export interface StoreSettings {
   notifyStockExport?: boolean;
   notifyLowStock?: boolean;
   notifyFinancial?: boolean;
+  lastResetAt?: string;
 }
 
 export interface WarehouseLocation {

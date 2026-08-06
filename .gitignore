@@ -12,6 +12,7 @@ dist
 dist_desktop_final
 dist-ssr
 *.local
+*.exe
 
 # Editor directories and files
 .vscode/*

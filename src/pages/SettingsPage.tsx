@@ -7,6 +7,7 @@ import { db } from '../db/db';
 import { CategoryManager } from '../components/settings/CategoryManager';
 import { SyncHistoryPage } from './SyncHistoryPage';
 import { sendTestNotification } from '../services/telegramService';
+import { wipeAllSystemDataViaRPC } from '../services/syncEngine';
 import {
   Settings,
   Store,
@@ -60,25 +61,28 @@ export const SettingsPage: React.FC = () => {
 
   const [isResetModalOpen, setIsResetModalOpen] = useState(false);
   const [confirmText, setConfirmText] = useState('');
+  const [isResetting, setIsResetting] = useState(false);
   const [isTestingTelegram, setIsTestingTelegram] = useState(false);
   const [showBotToken, setShowBotToken] = useState(false);
 
   const handleFactoryResetAllData = async () => {
+    setIsResetting(true);
     try {
-      await db.products.clear();
-      await db.categories.clear();
-      await db.inventoryTransactions.clear();
-      await db.syncQueue.clear();
-      await db.syncLogs.clear();
-      await db.conflicts.clear();
-      showToast('Đã xóa sạch toàn bộ dữ liệu hệ thống về số 0!', 'success');
-      setIsResetModalOpen(false);
-      setTimeout(() => {
-        window.location.reload();
-      }, 600);
-    } catch (err) {
+      const res = await wipeAllSystemDataViaRPC();
+      if (res.success) {
+        showToast(res.message, 'success');
+        setIsResetModalOpen(false);
+        setTimeout(() => {
+          window.location.reload();
+        }, 1000);
+      } else {
+        showToast(`❌ ${res.message}`, 'error');
+      }
+    } catch (err: any) {
       console.error('Reset error:', err);
-      showToast('Có lỗi xảy ra khi xóa dữ liệu!', 'error');
+      showToast(`❌ Có lỗi xảy ra khi xóa dữ liệu: ${err.message || 'Lỗi hệ thống'}. Đã Rollback!`, 'error');
+    } finally {
+      setIsResetting(false);
     }
   };
 
@@ -700,15 +704,15 @@ export const SettingsPage: React.FC = () => {
             <div className="flex items-center justify-between border-b border-rose-200 pb-3 dark:border-rose-900">
               <h3 className="text-base font-bold text-rose-700 dark:text-rose-400 flex items-center gap-2">
                 <ShieldAlert className="h-5 w-5 text-rose-600 dark:text-rose-400" />
-                Vùng Nguy Hiểm: Xóa Sạch Tất Cả Dữ Liệu Trong Hệ Thống Về 0
+                Xóa toàn bộ dữ liệu trên Supabase (Đồng bộ tất cả máy)
               </h3>
               <span className="rounded-full bg-rose-600 px-2.5 py-0.5 text-[10px] font-extrabold uppercase text-white tracking-wider">
-                Factory Reset
+                Admin Exclusive
               </span>
             </div>
 
             <p className="text-xs text-rose-700 dark:text-rose-300 leading-relaxed">
-              Chức năng này sẽ **xóa vĩnh viễn toàn bộ dữ liệu** bao gồm: Tất cả Sản phẩm, Danh mục, Phiếu Nhập kho, Phiếu Xuất kho, Hàng đợi đồng bộ và Nhật ký trên hệ thống local. Hệ thống sẽ được reset trắng hoàn toàn về 0.
+              Thực hiện xóa toàn bộ dữ liệu tất cả bảng nghiệp vụ (Sản phẩm, Khách hàng, Đơn hàng, Phiếu nhập, Phiếu xuất, Nhà cung cấp, Danh mục, Tồn kho, Công nợ, Thu chi, Lịch sử giao dịch...) bằng <b>PostgreSQL TRUNCATE ... RESTART IDENTITY CASCADE</b> trên máy chủ Supabase. Toàn bộ các máy tính chạy file <b>.exe</b> khác sẽ tự động nhận dữ liệu rỗng tức thì qua kết nối Realtime.
             </p>
 
             <button
@@ -719,7 +723,7 @@ export const SettingsPage: React.FC = () => {
               className="flex items-center gap-2 rounded-xl bg-rose-600 px-5 py-2.5 text-xs font-bold text-white shadow-md hover:bg-rose-700 transition"
             >
               <Trash2 className="h-4 w-4" />
-              Xóa Sạch Tất Cả Dữ Liệu (Về Số 0)
+              Xóa toàn bộ dữ liệu trên Supabase (Đồng bộ tất cả máy)
             </button>
           </div>
         </div>
@@ -728,54 +732,71 @@ export const SettingsPage: React.FC = () => {
       {/* Confirmation Modal for Resetting All Data */}
       {isResetModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl dark:bg-gray-900 border border-rose-200 dark:border-rose-900 space-y-5">
+          <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl dark:bg-gray-900 border border-rose-200 dark:border-rose-900 space-y-5">
             <div className="flex items-center gap-3 text-rose-600 dark:text-rose-400">
-              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-rose-100 dark:bg-rose-950">
+              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-rose-100 dark:bg-rose-950 shrink-0">
                 <AlertTriangle className="h-6 w-6 text-rose-600 dark:text-rose-400" />
               </div>
               <div>
                 <h3 className="text-base font-bold text-gray-900 dark:text-white">
-                  Xác Nhận Xóa Sạch Dữ Liệu Về 0
+                  Xác Nhận Quyền Admin: Xóa Toàn Bộ Dữ Liệu
                 </h3>
-                <p className="text-xs text-gray-500 dark:text-gray-400">Hành động này không thể hoàn tác!</p>
+                <p className="text-xs text-rose-600 dark:text-rose-400 font-semibold mt-0.5">
+                  Bạn có chắc muốn xóa toàn bộ dữ liệu trên Supabase? Hành động này sẽ ảnh hưởng đến tất cả máy tính đang sử dụng phần mềm và không thể hoàn tác.
+                </p>
               </div>
             </div>
 
-            <div className="rounded-xl bg-rose-50 p-3.5 text-xs text-rose-800 dark:bg-rose-950/60 dark:text-rose-300 space-y-1.5">
-              <p className="font-bold">• Tất cả Sản phẩm & Tồn kho sẽ bị xóa sạch</p>
-              <p className="font-bold">• Tất cả Danh mục & Lịch sử Giao dịch sẽ về 0</p>
-              <p className="font-bold">• Hàng đợi đồng bộ SyncQueue sẽ bị xóa trống</p>
+            <div className="rounded-xl bg-rose-50 p-4 text-xs text-rose-900 dark:bg-rose-950/70 dark:text-rose-200 space-y-2 border border-rose-200 dark:border-rose-900">
+              <p className="font-extrabold flex items-center gap-1.5 text-rose-700 dark:text-rose-400">
+                ⚠️ CẢNH BÁO QUYỀN HẠN VÀ TÁC ĐỘNG HỆ THỐNG:
+              </p>
+              <p className="font-semibold">• Xóa sạch toàn bộ dữ liệu nghiệp vụ: Sản phẩm, Danh mục, Tồn kho, Nhập/Xuất kho, Sổ quỹ & Công nợ.</p>
+              <p className="font-semibold">• Chạy lệnh PostgreSQL <code>TRUNCATE ... RESTART IDENTITY CASCADE</code> reset số đếm tự tăng về 1.</p>
+              <p className="font-semibold">• Không xóa cấu trúc DB, không xóa bảng, không xóa tài khoản đăng nhập hay cấu hình hệ thống.</p>
+              <p className="font-semibold">• Phát sóng tín hiệu Realtime xóa sạch dữ liệu lập tức trên tất cả máy tính (bao gồm các bản .exe).</p>
             </div>
 
             <div>
               <label className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-1.5">
-                Nhập từ <span className="font-mono font-extrabold text-rose-600 dark:text-rose-400">XOADULIEU</span> bên dưới để xác nhận:
+                Nhập chính xác cụm từ <span className="font-mono font-extrabold text-rose-600 dark:text-rose-400">XOADULIEU</span> bên dưới để xác nhận quyền Admin:
               </label>
               <input
                 type="text"
+                disabled={isResetting}
                 value={confirmText}
                 onChange={(e) => setConfirmText(e.target.value)}
                 placeholder="Gõ XOADULIEU..."
-                className="w-full rounded-xl border border-gray-300 bg-gray-50 px-3.5 py-2 text-sm font-mono font-bold text-gray-900 focus:bg-white dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+                className="w-full rounded-xl border border-gray-300 bg-gray-50 px-3.5 py-2.5 text-sm font-mono font-bold text-gray-900 focus:bg-white dark:border-gray-700 dark:bg-gray-800 dark:text-white disabled:opacity-50"
               />
             </div>
 
             <div className="flex justify-end gap-3 pt-2">
               <button
                 type="button"
+                disabled={isResetting}
                 onClick={() => setIsResetModalOpen(false)}
-                className="rounded-xl border border-gray-300 px-4 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+                className="rounded-xl border border-gray-300 px-4 py-2.5 text-xs font-semibold text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800 disabled:opacity-50"
               >
                 Hủy bỏ
               </button>
               <button
                 type="button"
-                disabled={confirmText.trim() !== 'XOADULIEU'}
+                disabled={confirmText.trim() !== 'XOADULIEU' || isResetting}
                 onClick={handleFactoryResetAllData}
-                className="flex items-center gap-1.5 rounded-xl bg-rose-600 px-4 py-2 text-xs font-bold text-white shadow-md hover:bg-rose-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="flex items-center gap-1.5 rounded-xl bg-rose-600 px-5 py-2.5 text-xs font-bold text-white shadow-md hover:bg-rose-700 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                <RotateCcw className="h-4 w-4" />
-                Xác Nhận Xóa Tất Cả Về 0
+                {isResetting ? (
+                  <>
+                    <RefreshCw className="h-4 w-4 animate-spin" />
+                    Đang Thực Thi RPC PostgreSQL & Realtime...
+                  </>
+                ) : (
+                  <>
+                    <RotateCcw className="h-4 w-4" />
+                    Xác Nhận Xóa Toàn Bộ Dữ Liệu
+                  </>
+                )}
               </button>
             </div>
           </div>

@@ -2,7 +2,7 @@ import React, { useEffect } from 'react';
 import { useUIStore } from './store/useUIStore';
 import { useSettingsStore } from './store/useSettingsStore';
 import { useNetworkStore } from './store/useNetworkStore';
-import { performFullSync } from './services/syncEngine';
+import { performFullSync, setupRealtimeSyncListener } from './services/syncEngine';
 
 import { Navbar } from './components/layout/Navbar';
 import { Sidebar } from './components/layout/Sidebar';
@@ -34,6 +34,14 @@ export function App() {
       document.documentElement.classList.remove('dark');
     }
   }, [theme]);
+
+  // Setup Realtime Sync Broadcast Listener for instant multi-machine reset
+  useEffect(() => {
+    const unsubRealtime = setupRealtimeSyncListener();
+    return () => {
+      unsubRealtime();
+    };
+  }, []);
 
   // Setup online/offline event listeners & auto-sync interval
   useEffect(() => {
