@@ -94,7 +94,17 @@ export function setupRealtimeSyncListener(): () => void {
               await (db as any)[table].delete(oldRow.id);
             }
           } else if (newRow && newRow.id) {
-            await (db as any)[table].put({ ...newRow, syncStatus: 'synced' });
+            let recordToSave = { ...newRow, syncStatus: 'synced' };
+            if (table === 'debts') {
+              recordToSave = {
+                ...recordToSave,
+                totalDebt: Number(newRow.totalDebt || 0),
+                paidAmount: Number(newRow.paidAmount || 0),
+                remainingDebt: Number(newRow.remainingDebt || 0),
+                history: Array.isArray(newRow.history) ? newRow.history : [],
+              };
+            }
+            await (db as any)[table].put(recordToSave);
           }
           await useNetworkStore.getState().refreshCounts();
         }
@@ -289,21 +299,20 @@ export async function pullFromSupabase(supabase: any): Promise<number> {
         const remoteData = result.data;
         const remoteIdMap = new Set(remoteData.map((item) => item.id));
 
-        // 1. Put all remote records into local IndexedDB
+        // 1. Put all remote records into local IndexedDB with normalized numeric fields
         if (remoteData.length > 0) {
-          await (db as any)[tableName].bulkPut(remoteData.map((r) => ({ ...r, syncStatus: 'synced' })));
+          const processedRecords = remoteData.map((r) => {
+            const record = { ...r, syncStatus: 'synced' };
+            if (tableName === 'debts') {
+              record.totalDebt = Number(r.totalDebt || 0);
+              record.paidAmount = Number(r.paidAmount || 0);
+              record.remainingDebt = Number(r.remainingDebt || 0);
+              record.history = Array.isArray(r.history) ? r.history : [];
+            }
+            return record;
+          });
+          await (db as any)[tableName].bulkPut(processedRecords);
           totalPulled += remoteData.length;
-        }
-
-        // 2. Clean up local records that were hard-deleted on Supabase (if synced and not pending in local queue)
-        const localRecords = await (db as any)[tableName].toArray();
-        const pendingQueue = await db.syncQueue.where('table').equals(tableName).toArray();
-        const pendingIds = new Set(pendingQueue.map((q) => q.recordId));
-
-        for (const localRec of localRecords) {
-          if (localRec.id && !remoteIdMap.has(localRec.id) && !pendingIds.has(localRec.id)) {
-            await (db as any)[tableName].delete(localRec.id);
-          }
         }
       }
     } catch (err) {
@@ -312,6 +321,49 @@ export async function pullFromSupabase(supabase: any): Promise<number> {
   }
 
   return totalPulled;
+}
+
+// Push all unsynced records found directly in local IndexedDB tables
+export async function pushAllUnsyncedLocalData(supabase: any): Promise<number> {
+  let count = 0;
+  const tables: Array<'categories' | 'products' | 'inventoryTransactions' | 'financialTransactions' | 'debts'> = [
+    'categories',
+    'products',
+    'inventoryTransactions',
+    'financialTransactions',
+    'debts',
+  ];
+
+  for (const tableName of tables) {
+    try {
+      const localRecords = await (db as any)[tableName].toArray();
+      const unsyncedRecords = localRecords.filter((r: any) => r.syncStatus !== 'synced');
+
+      for (const rec of unsyncedRecords) {
+        const payload = {
+          ...rec,
+          syncStatus: 'synced',
+          updatedAt: rec.updatedAt || new Date().toISOString(),
+        };
+
+        const result = await fetchWithTimeout<{ error: any }>(supabase.from(tableName).upsert(payload), 6000);
+        if (!result.error) {
+          await (db as any)[tableName].update(rec.id, { syncStatus: 'synced' });
+          const qItems = await db.syncQueue.where('recordId').equals(rec.id).toArray();
+          for (const q of qItems) {
+            await db.syncQueue.delete(q.id);
+          }
+          count++;
+        } else {
+          console.warn(`Error pushing unsynced record ${rec.id} in ${tableName}:`, result.error);
+        }
+      }
+    } catch (err) {
+      console.warn(`Push unsynced error for table ${tableName}:`, err);
+    }
+  }
+
+  return count;
 }
 
 export async function performFullSync(): Promise<{ success: boolean; count: number; message: string }> {
@@ -371,7 +423,14 @@ export async function performFullSync(): Promise<{ success: boolean; count: numb
         const remoteResetAt = resetRes.data.value;
         const localResetAt = useSettingsStore.getState().lastResetAt;
 
-        if (!localResetAt || new Date(remoteResetAt).getTime() > new Date(localResetAt).getTime()) {
+      if (resetRes.data && resetRes.data.value) {
+        const remoteResetAt = resetRes.data.value;
+        const localResetAt = useSettingsStore.getState().lastResetAt;
+
+        if (!localResetAt) {
+          // Initialize localResetAt to match remote reset timestamp on first boot without wiping local data
+          useSettingsStore.getState().updateSettings({ lastResetAt: remoteResetAt });
+        } else if (new Date(remoteResetAt).getTime() > new Date(localResetAt).getTime()) {
           console.warn('⚡ Remote system reset detected! Wiping local IndexedDB to match Supabase 0 state...');
 
           await db.clearAllData();
@@ -396,14 +455,18 @@ export async function performFullSync(): Promise<{ success: boolean; count: numb
           };
         }
       }
+      }
     } catch (err) {
       console.warn('Kiểm tra timestamp reset máy chủ:', err);
     }
 
-    // 2. Remote Supabase Sync: PUSH local changes then PULL remote updates
+    // Phase 1: PUSH all unsynced/pending local records found in IndexedDB tables to Supabase
+    const unsyncedPushedCount = await pushAllUnsyncedLocalData(supabase);
+
+    // Phase 2: PUSH remaining local queue items (e.g. delete actions)
     const queue = await db.syncQueue.toArray();
     queue.sort((a, b) => a.timestamp - b.timestamp);
-    let processedCount = 0;
+    let processedCount = unsyncedPushedCount;
 
     // Phase 1: PUSH local queue items to Supabase
     for (const item of queue) {

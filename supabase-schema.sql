@@ -110,6 +110,25 @@ ALTER TABLE "financialTransactions" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE debts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE system_settings ENABLE ROW LEVEL SECURITY;
 
+-- Explicit RLS Policies allowing full CRUD access for anon and authenticated API keys
+DROP POLICY IF EXISTS "Allow anon full access on products" ON products;
+CREATE POLICY "Allow anon full access on products" ON products FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Allow anon full access on categories" ON categories;
+CREATE POLICY "Allow anon full access on categories" ON categories FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Allow anon full access on inventoryTransactions" ON "inventoryTransactions";
+CREATE POLICY "Allow anon full access on inventoryTransactions" ON "inventoryTransactions" FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Allow anon full access on financialTransactions" ON "financialTransactions";
+CREATE POLICY "Allow anon full access on financialTransactions" ON "financialTransactions" FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Allow anon full access on debts" ON debts;
+CREATE POLICY "Allow anon full access on debts" ON debts FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Allow anon full access on system_settings" ON system_settings;
+CREATE POLICY "Allow anon full access on system_settings" ON system_settings FOR ALL USING (true) WITH CHECK (true);
+
 -- Enable Realtime replication for multi-device live sync
 DO $$
 BEGIN

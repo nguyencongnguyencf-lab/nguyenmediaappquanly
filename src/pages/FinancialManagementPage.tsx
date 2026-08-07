@@ -15,6 +15,7 @@ import { enqueueSyncItem } from '../services/syncEngine';
 import { exportElementToPDF } from '../services/pdfService';
 import { numberToVietnameseWords } from '../services/numberToWords';
 import { exportDebtsToExcel } from '../services/excelService';
+import { performFullSync } from '../services/syncEngine';
 import {
   Wallet,
   ArrowUpRight,
@@ -49,6 +50,7 @@ import {
   ExternalLink,
   Tag,
   Eye,
+  RefreshCw,
 } from 'lucide-react';
 
 export const FinancialManagementPage: React.FC = () => {
@@ -126,18 +128,18 @@ export const FinancialManagementPage: React.FC = () => {
 
   const netBalance = totalIncome - totalExpense;
 
-  // Calculated Statistics for Debt Tab
+  // Calculated Statistics for Debt Tab with safety Number casting
   const totalCustomerOriginalDebt = debts
     .filter((d) => d.partyType === 'customer')
-    .reduce((sum, d) => sum + (d.totalDebt || 0), 0);
+    .reduce((sum, d) => sum + Number(d.totalDebt || 0), 0);
 
   const totalCustomerPaidDebt = debts
     .filter((d) => d.partyType === 'customer')
-    .reduce((sum, d) => sum + (d.paidAmount || 0), 0);
+    .reduce((sum, d) => sum + Number(d.paidAmount || 0), 0);
 
   const totalCustomerRemainingDebt = debts
     .filter((d) => d.partyType === 'customer')
-    .reduce((sum, d) => sum + (d.remainingDebt || 0), 0);
+    .reduce((sum, d) => sum + Number(d.remainingDebt || 0), 0);
 
   const customerCollectionRate = totalCustomerOriginalDebt > 0
     ? Math.round((totalCustomerPaidDebt / totalCustomerOriginalDebt) * 100)
@@ -145,15 +147,15 @@ export const FinancialManagementPage: React.FC = () => {
 
   const totalSupplierOriginalDebt = debts
     .filter((d) => d.partyType === 'supplier')
-    .reduce((sum, d) => sum + (d.totalDebt || 0), 0);
+    .reduce((sum, d) => sum + Number(d.totalDebt || 0), 0);
 
   const totalSupplierPaidDebt = debts
     .filter((d) => d.partyType === 'supplier')
-    .reduce((sum, d) => sum + (d.paidAmount || 0), 0);
+    .reduce((sum, d) => sum + Number(d.paidAmount || 0), 0);
 
   const totalSupplierRemainingDebt = debts
     .filter((d) => d.partyType === 'supplier')
-    .reduce((sum, d) => sum + (d.remainingDebt || 0), 0);
+    .reduce((sum, d) => sum + Number(d.remainingDebt || 0), 0);
 
   const netDebtBalance = totalCustomerRemainingDebt - totalSupplierRemainingDebt;
 
@@ -274,6 +276,7 @@ export const FinancialManagementPage: React.FC = () => {
       history: [],
       createdAt: now,
       updatedAt: now,
+      syncStatus: 'pending',
       isDeleted: false,
     };
 
@@ -327,6 +330,7 @@ export const FinancialManagementPage: React.FC = () => {
         status: newStatus,
         history: updatedHistory,
         updatedAt: now,
+        syncStatus: 'pending',
       };
 
       // Update debt record in Dexie
@@ -336,6 +340,7 @@ export const FinancialManagementPage: React.FC = () => {
         status: newStatus,
         history: updatedHistory,
         updatedAt: now,
+        syncStatus: 'pending',
       });
       await enqueueSyncItem('debts', 'update', selectedDebt.id, updatedDebt);
 
@@ -885,6 +890,20 @@ export const FinancialManagementPage: React.FC = () => {
                 <option value="date_desc">Mới nhất</option>
                 <option value="name_asc">Tên A-Z</option>
               </select>
+
+              <button
+                onClick={async () => {
+                  showToast('Đang tiến hành đồng bộ công nợ với Supabase...', 'info');
+                  const res = await performFullSync();
+                  if (res.success) showToast(res.message, 'success');
+                  else showToast(res.message, 'error');
+                }}
+                className="flex items-center gap-1.5 rounded-xl border border-blue-300 bg-blue-50 px-3 py-2 text-xs font-bold text-blue-700 hover:bg-blue-100 dark:border-blue-800 dark:bg-blue-950/60 dark:text-blue-300"
+                title="Đồng bộ lại toàn bộ sổ công nợ với máy chủ Supabase"
+              >
+                <RefreshCw className="h-4 w-4" />
+                <span className="hidden sm:inline">Sync Công Nợ</span>
+              </button>
 
               <button
                 onClick={() => exportDebtsToExcel(filteredDebts)}

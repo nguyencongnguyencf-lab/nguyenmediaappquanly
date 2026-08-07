@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db/db';
-import type { InventoryTransaction, TransactionItem } from '../types/inventory';
+import type { InventoryTransaction, TransactionItem, DebtRecord } from '../types/inventory';
 import { enqueueSyncItem } from '../services/syncEngine';
 import { notifyStockExport, type LowStockItem } from '../services/telegramService';
 import { useUIStore } from '../store/useUIStore';
@@ -41,6 +41,8 @@ export const StockExportPage: React.FC = () => {
   const [customerTier, setCustomerTier] = useState<'retail' | 'wholesale' | 'vip'>('retail');
   const [selectedPromoId, setSelectedPromoId] = useState('');
   const [note, setNote] = useState('');
+  const [paymentMode, setPaymentMode] = useState<'full' | 'debt' | 'partial'>('full');
+  const [paidAmountInput, setPaidAmountInput] = useState<number>(0);
   const [items, setItems] = useState<TransactionItem[]>([]);
   const [selectedProductId, setSelectedProductId] = useState('');
   const [quantityInput, setQuantityInput] = useState(1);
@@ -245,30 +247,100 @@ export const StockExportPage: React.FC = () => {
     };
 
     try {
-      // 1. Add Transaction
+      // Calculate actual paid and remaining debt amount
+      let actualPaid = totalAmount;
+      let debtAmount = 0;
+
+      if (paymentMode === 'debt') {
+        actualPaid = 0;
+        debtAmount = totalAmount;
+      } else if (paymentMode === 'partial') {
+        actualPaid = Math.min(totalAmount, Math.max(0, Number(paidAmountInput)));
+        debtAmount = Math.max(0, totalAmount - actualPaid);
+      }
+
+      // 1. Add Inventory Transaction
       await db.inventoryTransactions.add(newTransaction);
       await enqueueSyncItem('inventoryTransactions', 'create', newTransaction.id, newTransaction);
 
-      // 2. Automatically record a Cashbook Income in Financial Transactions
-      const finTransaction = {
-        id: `fin-exp-${Date.now()}`,
-        code: `PT-EXP-${code}`,
-        type: 'income' as const,
-        category: 'sale' as const,
-        categoryName: 'Bán hàng',
-        amount: totalAmount,
-        partyName: customerName.trim() || 'Khách vãng lai',
-        paymentMethod: 'cash' as const,
-        note: `Tự động nạp từ phiếu xuất kho ${code}. ${activePromo ? `[KM: ${activePromo.name}] ` : ''}${note || ''}`.trim(),
-        createdAt: now,
-        updatedAt: now,
-        syncStatus: 'pending' as const,
-        isDeleted: false,
-      };
-      await db.financialTransactions.add(finTransaction);
-      await enqueueSyncItem('financialTransactions', 'create', finTransaction.id, finTransaction);
+      // 2. Automatically record Cashbook Income if money was paid
+      if (actualPaid > 0) {
+        const finTransaction = {
+          id: `fin-exp-${Date.now()}`,
+          code: `PT-EXP-${code}`,
+          type: 'income' as const,
+          category: 'sale' as const,
+          categoryName: 'Bán hàng',
+          amount: actualPaid,
+          partyName: customerName.trim() || 'Khách vãng lai',
+          paymentMethod: 'cash' as const,
+          note: `Tự động nạp từ phiếu xuất kho ${code} (${paymentMode === 'partial' ? 'Thanh toán 1 phần' : 'Thanh toán đủ'}). ${activePromo ? `[KM: ${activePromo.name}] ` : ''}${note || ''}`.trim(),
+          createdAt: now,
+          updatedAt: now,
+          syncStatus: 'pending' as const,
+          isDeleted: false,
+        };
+        await db.financialTransactions.add(finTransaction);
+        await enqueueSyncItem('financialTransactions', 'create', finTransaction.id, finTransaction);
+      }
 
-      // 3. Subtract Stock in IndexedDB & check low stock threshold
+      // 3. Create or Update Debt Record if debt exists
+      if (debtAmount > 0) {
+        const targetPartyName = customerName.trim() || 'Khách nợ vãng lai';
+        const existingDebt = await db.debts.where('partyName').equalsIgnoreCase(targetPartyName).first();
+
+        if (existingDebt) {
+          const updatedTotal = Number(existingDebt.totalDebt || 0) + debtAmount;
+          const updatedPaid = Number(existingDebt.paidAmount || 0) + actualPaid;
+          const updatedRemaining = Math.max(0, updatedTotal - updatedPaid);
+          const updatedStatus = updatedRemaining === 0 ? 'paid' : (updatedPaid > 0 ? 'partial' : 'unpaid');
+          const historyEntry = {
+            id: `pmt-${Date.now()}`,
+            amount: actualPaid,
+            paymentMethod: 'cash' as const,
+            note: `Ghi nhận nợ mới từ đơn xuất kho ${code}`,
+            createdAt: now,
+            receiptCode: code,
+          };
+          const updatedDebt: DebtRecord = {
+            ...existingDebt,
+            totalDebt: updatedTotal,
+            paidAmount: updatedPaid,
+            remainingDebt: updatedRemaining,
+            status: updatedStatus,
+            history: [...(existingDebt.history || []), historyEntry],
+            updatedAt: now,
+          };
+          await db.debts.put(updatedDebt);
+          await enqueueSyncItem('debts', 'update', updatedDebt.id, updatedDebt);
+        } else {
+          const newDebt: DebtRecord = {
+            id: `debt-${Date.now()}`,
+            partyName: targetPartyName,
+            partyType: 'customer',
+            totalDebt: totalAmount,
+            paidAmount: actualPaid,
+            remainingDebt: debtAmount,
+            transactionCode: code,
+            status: debtAmount === 0 ? 'paid' : (actualPaid > 0 ? 'partial' : 'unpaid'),
+            history: actualPaid > 0 ? [{
+              id: `pmt-${Date.now()}`,
+              amount: actualPaid,
+              paymentMethod: 'cash' as const,
+              note: `Thanh toán 1 phần đơn xuất ${code}`,
+              createdAt: now,
+              receiptCode: code,
+            }] : [],
+            createdAt: now,
+            updatedAt: now,
+            isDeleted: false,
+          };
+          await db.debts.add(newDebt);
+          await enqueueSyncItem('debts', 'create', newDebt.id, newDebt);
+        }
+      }
+
+      // 4. Subtract Stock in IndexedDB & check low stock threshold
       const lowStockProducts: LowStockItem[] = [];
       for (const item of items) {
         const prod = products.find((p) => p.id === item.productId)!;
@@ -293,16 +365,18 @@ export const StockExportPage: React.FC = () => {
         }
       }
 
-      // 4. Trigger Telegram Notification
+      // 5. Trigger Telegram Notification
       notifyStockExport(newTransaction, lowStockProducts).catch((err) =>
         console.error('Telegram export notification error:', err)
       );
 
-      showToast(`Xuất kho / Bán hàng thành công! Đã tự động ghi Sổ Quỹ & trừ tồn local.`, 'success');
+      showToast(`Xuất kho / Bán hàng thành công! Đã tự động cập nhật Kho, Sổ Quỹ & Công Nợ.`, 'success');
       setPrintedInvoice(newTransaction);
       setItems([]);
       setCustomerName('');
       setNote('');
+      setPaymentMode('full');
+      setPaidAmountInput(0);
     } catch (err) {
       console.error('Error saving export slip:', err);
       showToast('Có lỗi xảy ra khi tạo phiếu xuất!', 'error');
@@ -544,6 +618,38 @@ export const StockExportPage: React.FC = () => {
                 <p className="text-[11px] text-gray-400 italic mt-1">Không có khuyến mãi nào đang chạy</p>
               )}
             </div>
+
+            <div>
+              <label className="block text-xs font-bold text-blue-700 dark:text-blue-300 mb-1">
+                Hình Thức Thanh Toán & Công Nợ
+              </label>
+              <select
+                value={paymentMode}
+                onChange={(e) => setPaymentMode(e.target.value as any)}
+                className="w-full rounded-xl border border-blue-300 bg-blue-50 px-3.5 py-2 text-sm font-bold text-blue-900 dark:border-blue-800 dark:bg-blue-950 dark:text-blue-200"
+              >
+                <option value="full">💵 Thanh toán đủ (100% Tiền mặt / CK)</option>
+                <option value="debt">📝 Ghi nợ 100% (Cho khách nợ toàn bộ)</option>
+                <option value="partial">⚖️ Thanh toán 1 phần (Cộng nợ số còn lại)</option>
+              </select>
+            </div>
+
+            {paymentMode === 'partial' && (
+              <div>
+                <label className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-1">
+                  Số Tiền Khách Trả Trước (VNĐ)
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  max={totalAmount}
+                  value={paidAmountInput}
+                  onChange={(e) => setPaidAmountInput(Number(e.target.value))}
+                  placeholder="Nhập số tiền trả trước..."
+                  className="w-full rounded-xl border border-gray-300 bg-gray-50 px-3.5 py-2 text-sm font-bold text-emerald-700 dark:border-gray-700 dark:bg-gray-800 dark:text-emerald-400"
+                />
+              </div>
+            )}
 
             <div>
               <label className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-1">Ghi Chú</label>

@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db/db';
-import type { InventoryTransaction, TransactionItem } from '../types/inventory';
+import type { InventoryTransaction, TransactionItem, DebtRecord } from '../types/inventory';
 import { enqueueSyncItem } from '../services/syncEngine';
 import { notifyStockImport } from '../services/telegramService';
 import { useUIStore } from '../store/useUIStore';
@@ -29,6 +29,8 @@ export const StockImportPage: React.FC = () => {
 
   const [supplierName, setSupplierName] = useState('');
   const [note, setNote] = useState('');
+  const [paymentMode, setPaymentMode] = useState<'full' | 'debt' | 'partial'>('full');
+  const [paidAmountInput, setPaidAmountInput] = useState<number>(0);
   const [items, setItems] = useState<TransactionItem[]>([]);
   const [selectedProductId, setSelectedProductId] = useState('');
   const [quantityInput, setQuantityInput] = useState(1);
@@ -125,30 +127,100 @@ export const StockImportPage: React.FC = () => {
     };
 
     try {
+      // Calculate actual paid and remaining debt amount to supplier
+      let actualPaid = totalAmount;
+      let debtAmount = 0;
+
+      if (paymentMode === 'debt') {
+        actualPaid = 0;
+        debtAmount = totalAmount;
+      } else if (paymentMode === 'partial') {
+        actualPaid = Math.min(totalAmount, Math.max(0, Number(paidAmountInput)));
+        debtAmount = Math.max(0, totalAmount - actualPaid);
+      }
+
       // 1. Save Transaction to IndexedDB
       await db.inventoryTransactions.add(newTransaction);
       await enqueueSyncItem('inventoryTransactions', 'create', newTransaction.id, newTransaction);
 
-      // 2. Automatically record a Cashbook Expense in Financial Transactions
-      const finTransaction = {
-        id: `fin-imp-${Date.now()}`,
-        code: `PC-IMP-${code}`,
-        type: 'expense' as const,
-        category: 'purchase' as const,
-        categoryName: 'Nhập hàng',
-        amount: totalAmount,
-        partyName: supplierName.trim() || 'Nhà cung cấp chưa xác định',
-        paymentMethod: 'cash' as const,
-        note: `Tự động nạp từ phiếu nhập kho ${code}. ${note || ''}`.trim(),
-        createdAt: now,
-        updatedAt: now,
-        syncStatus: 'pending' as const,
-        isDeleted: false,
-      };
-      await db.financialTransactions.add(finTransaction);
-      await enqueueSyncItem('financialTransactions', 'create', finTransaction.id, finTransaction);
+      // 2. Automatically record a Cashbook Expense if money was paid
+      if (actualPaid > 0) {
+        const finTransaction = {
+          id: `fin-imp-${Date.now()}`,
+          code: `PC-IMP-${code}`,
+          type: 'expense' as const,
+          category: 'purchase' as const,
+          categoryName: 'Nhập hàng',
+          amount: actualPaid,
+          partyName: supplierName.trim() || 'Nhà cung cấp chưa xác định',
+          paymentMethod: 'cash' as const,
+          note: `Tự động nạp từ phiếu nhập kho ${code} (${paymentMode === 'partial' ? 'Thanh toán 1 phần' : 'Thanh toán đủ'}). ${note || ''}`.trim(),
+          createdAt: now,
+          updatedAt: now,
+          syncStatus: 'pending' as const,
+          isDeleted: false,
+        };
+        await db.financialTransactions.add(finTransaction);
+        await enqueueSyncItem('financialTransactions', 'create', finTransaction.id, finTransaction);
+      }
 
-      // 3. Immediately update local inventory stock for each product
+      // 3. Create or Update Supplier Debt Record if debt exists
+      if (debtAmount > 0) {
+        const targetPartyName = supplierName.trim() || 'Nhà cung cấp chưa xác định';
+        const existingDebt = await db.debts.where('partyName').equalsIgnoreCase(targetPartyName).first();
+
+        if (existingDebt) {
+          const updatedTotal = Number(existingDebt.totalDebt || 0) + debtAmount;
+          const updatedPaid = Number(existingDebt.paidAmount || 0) + actualPaid;
+          const updatedRemaining = Math.max(0, updatedTotal - updatedPaid);
+          const updatedStatus = updatedRemaining === 0 ? 'paid' : (updatedPaid > 0 ? 'partial' : 'unpaid');
+          const historyEntry = {
+            id: `pmt-${Date.now()}`,
+            amount: actualPaid,
+            paymentMethod: 'cash' as const,
+            note: `Ghi nhận nợ mới từ phiếu nhập kho ${code}`,
+            createdAt: now,
+            receiptCode: code,
+          };
+          const updatedDebt: DebtRecord = {
+            ...existingDebt,
+            totalDebt: updatedTotal,
+            paidAmount: updatedPaid,
+            remainingDebt: updatedRemaining,
+            status: updatedStatus,
+            history: [...(existingDebt.history || []), historyEntry],
+            updatedAt: now,
+          };
+          await db.debts.put(updatedDebt);
+          await enqueueSyncItem('debts', 'update', updatedDebt.id, updatedDebt);
+        } else {
+          const newDebt: DebtRecord = {
+            id: `debt-${Date.now()}`,
+            partyName: targetPartyName,
+            partyType: 'supplier',
+            totalDebt: totalAmount,
+            paidAmount: actualPaid,
+            remainingDebt: debtAmount,
+            transactionCode: code,
+            status: debtAmount === 0 ? 'paid' : (actualPaid > 0 ? 'partial' : 'unpaid'),
+            history: actualPaid > 0 ? [{
+              id: `pmt-${Date.now()}`,
+              amount: actualPaid,
+              paymentMethod: 'cash' as const,
+              note: `Thanh toán 1 phần phiếu nhập ${code}`,
+              createdAt: now,
+              receiptCode: code,
+            }] : [],
+            createdAt: now,
+            updatedAt: now,
+            isDeleted: false,
+          };
+          await db.debts.add(newDebt);
+          await enqueueSyncItem('debts', 'create', newDebt.id, newDebt);
+        }
+      }
+
+      // 4. Immediately update local inventory stock for each product
       for (const item of items) {
         const prod = products.find((p) => p.id === item.productId);
         if (prod) {
@@ -162,14 +234,16 @@ export const StockImportPage: React.FC = () => {
         }
       }
 
-      // 4. Trigger Telegram Notification
+      // 5. Trigger Telegram Notification
       notifyStockImport(newTransaction).catch((err) => console.error('Telegram import notification error:', err));
 
-      showToast(`Tạo phiếu nhập ${code} thành công! Kho & Sổ Quỹ đã được cập nhật.`, 'success');
+      showToast(`Tạo phiếu nhập ${code} thành công! Kho, Sổ Quỹ & Công Nợ đã được cập nhật.`, 'success');
       setPrintedSlip(newTransaction);
       setItems([]);
       setSupplierName('');
       setNote('');
+      setPaymentMode('full');
+      setPaidAmountInput(0);
     } catch (err) {
       console.error('Error saving import slip:', err);
       showToast('Lỗi khi tạo phiếu nhập kho!', 'error');
@@ -363,6 +437,38 @@ export const StockImportPage: React.FC = () => {
                 className="w-full rounded-xl border border-gray-300 bg-gray-50 px-3.5 py-2 text-sm text-gray-900 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
               />
             </div>
+
+            <div>
+              <label className="block text-xs font-bold text-purple-700 dark:text-purple-300 mb-1">
+                Hình Thức Thanh Toán & Nợ NCC
+              </label>
+              <select
+                value={paymentMode}
+                onChange={(e) => setPaymentMode(e.target.value as any)}
+                className="w-full rounded-xl border border-purple-300 bg-purple-50 px-3.5 py-2 text-sm font-bold text-purple-900 dark:border-purple-800 dark:bg-purple-950 dark:text-purple-200"
+              >
+                <option value="full">💵 Thanh toán đủ cho NCC (100% Tiền mặt / CK)</option>
+                <option value="debt">📝 Nợ nhà cung cấp 100% (Chưa thanh toán)</option>
+                <option value="partial">⚖️ Thanh toán 1 phần (Cộng nợ NCC phần còn lại)</option>
+              </select>
+            </div>
+
+            {paymentMode === 'partial' && (
+              <div>
+                <label className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-1">
+                  Số Tiền Trả Trước Cho NCC (VNĐ)
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  max={totalAmount}
+                  value={paidAmountInput}
+                  onChange={(e) => setPaidAmountInput(Number(e.target.value))}
+                  placeholder="Nhập số tiền đã trả trước..."
+                  className="w-full rounded-xl border border-gray-300 bg-gray-50 px-3.5 py-2 text-sm font-bold text-emerald-700 dark:border-gray-700 dark:bg-gray-800 dark:text-emerald-400"
+                />
+              </div>
+            )}
 
             <div>
               <label className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-1">Ghi Chú</label>
